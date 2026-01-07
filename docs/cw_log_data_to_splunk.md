@@ -974,14 +974,18 @@ cat response.json
 
 ```
 AWS/Firehose
-├── DeliveryToSplunk.Success (count)
-├── DeliveryToSplunk.DataFreshness (seconds) - lag time
-├── DeliveryToSplunk.Records (count)
-├── DeliveryToSplunk.Bytes (bytes)
-├── IncomingRecords (count) - from CloudWatch Logs
+
+├── DeliveryToHttpEndpoint.Success (count)
+├── DeliveryToHttpEndpoint.Records (count) 
+├── DeliveryToHttpEndpoint.DataFreshness (seconds)
+├── DeliveryToHttpEndpoint.Bytes (bytes)
+├── HttpEndpoint.RequestLatency (milliseconds)
+├── HttpEndpoint.RequestsPerSecond (count)
+├── IncomingRecords (count)
 ├── IncomingBytes (bytes)
-├── ThrottledRecords (count) - rate limiting
-└── ExecuteProcessing.Duration (ms) - Lambda transform time
+├── ThrottledRecords (count)
+└── ExecuteProcessing.Duration (ms) - if Lambda transform enabled
+
 ```
 
 **Lambda Transform Metrics:**
@@ -999,16 +1003,14 @@ AWS/Lambda
 
 ```hcl
 resource "aws_cloudwatch_metric_alarm" "firehose_delivery_failures" {
-  alarm_name          = "firehose-splunk-delivery-failures"
-  comparison_operator = "GreaterThanThreshold"
+  alarm_name          = "firehose-http-delivery-failures"
+  comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
-  metric_name         = "DeliveryToSplunk.Success"
+  metric_name         = "DeliveryToHttpEndpoint.Success"
   namespace           = "AWS/Firehose"
   period              = 300
   statistic           = "Sum"
-  threshold           = 0
-  alarm_description   = "Alert when Firehose fails to deliver to Splunk"
-  treat_missing_data  = "notBreaching"
+  threshold           = 1
   
   dimensions = {
     DeliveryStreamName = "cloudwatch-to-splunk-account123"
