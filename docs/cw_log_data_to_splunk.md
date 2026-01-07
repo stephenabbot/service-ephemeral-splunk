@@ -1,15 +1,3 @@
-# notes on sending cw log data to splunk
-
-## Docuemntation reference
-
-- AWS Firehose to Splunk Configuration: <https://docs.aws.amazon.com/firehose/latest/dev/create-destination.html#create-destination-splunk>
-- CloudWatch Logs Subscription Filters: <https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/SubscriptionFilters.html>
-- Firehose Data Transformation: <https://docs.aws.amazon.com/firehose/latest/dev/data-transformation.html>
-- Splunk HEC Event Format: <https://docs.splunk.com/Documentation/Splunk/latest/Data/FormateventsforHTTPEventCollector>
-- CloudWatch Logs to Firehose Blueprint: <https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/SubscriptionFilters.html#FirehoseExample>
-- Lambda Transform Blueprint: <https://github.com/aws-samples/amazon-kinesis-firehose-data-transformation-blueprints>
-- Splunk Cloud HEC Setup: <https://docs.splunk.com/Documentation/SplunkCloud/latest/Data/UsetheHTTPEventCollector>
-
 # Complete Firehose → Splunk Implementation Guide
 
 ## Architecture Overview
