@@ -23,6 +23,11 @@ variable "cost_thresholds" {
   type        = list(number)
 }
 
+variable "splunk_s3_bucket" {
+  description = "S3 bucket containing Splunk installer"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)

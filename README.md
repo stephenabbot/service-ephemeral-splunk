@@ -2,6 +2,10 @@
 
 This project provides automated infrastructure for deploying ephemeral Splunk Enterprise instances on AWS EC2 using a true fresh install approach. The infrastructure enables complete deploy/destroy cycles for Splunk environments used in proof-of-concept work, data analysis, and development tasks with zero idle costs when not in use.
 
+## Prerequisites
+
+This project requires the [splunk-s3-installer](https://github.com/stephenabbot/splunk-s3-installer) project to be deployed first. The splunk-s3-installer manages the Splunk installation package in S3 and publishes the installer URL to Parameter Store at `/splunk-s3-installer/installer-url`.
+
 ## Quick Start
 
 1. **Prerequisites**: Ensure you have OpenTofu, AWS CLI, and jq installed

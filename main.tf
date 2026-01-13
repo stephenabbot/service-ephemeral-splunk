@@ -74,6 +74,7 @@ module "splunk_instance" {
   volume_size         = local.environment_config[var.deployment_environment].volume_size
   cost_alarm_email    = var.cost_alarm_email
   cost_thresholds     = var.cost_thresholds
+  splunk_s3_bucket    = var.splunk_s3_bucket
   tags                = module.standard_tags.tags
 }
 
@@ -118,6 +119,11 @@ variable "cost_thresholds" {
   description = "Cost alarm thresholds"
   type        = list(number)
   default     = [5, 10, 20]
+}
+
+variable "splunk_s3_bucket" {
+  description = "S3 bucket containing Splunk installer"
+  type        = string
 }
 
 # Outputs

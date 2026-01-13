@@ -149,6 +149,13 @@ resource "aws_iam_role_policy" "splunk_instance_policy" {
           "ec2messages:SendReply"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "arn:aws:s3:::${var.splunk_s3_bucket}/*"
       }
     ]
   })

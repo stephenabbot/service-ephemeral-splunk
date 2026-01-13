@@ -34,30 +34,20 @@ aws logs create-log-stream \
 
 log_message "INFO" "Starting Splunk Enterprise installation"
 
-# Function to download Splunk
+# Function to download Splunk from S3
 download_splunk() {
-    # Method 1: Try direct versioned download
-    log_message "INFO" "Attempting direct versioned download"
-    local version="9.1.2"
-    local build="b6b9c8185839"
-    download_url="https://download.splunk.com/products/splunk/releases/${version}/linux/splunk-${version}-${build}-Linux-x86_64.tgz"
+    log_message "INFO" "Fetching S3 installer URL from Parameter Store"
     
-    if curl -s --head "$download_url" | grep -q "200"; then
-        log_message "INFO" "Direct versioned URL valid: $download_url"
-        return 0
+    local param_name="/splunk-s3-installer/installer-url"
+    download_url=$(aws ssm get-parameter --region us-east-1 --name "$param_name" --query Parameter.Value --output text 2>/dev/null || echo "")
+    
+    if [ -z "$download_url" ]; then
+        log_message "ERROR" "Failed to retrieve installer URL from Parameter Store: $param_name"
+        return 1
     fi
     
-    # Method 2: Try latest release
-    log_message "INFO" "Direct version failed, trying latest release"
-    download_url="https://download.splunk.com/products/splunk/releases/latest/linux/splunk-latest-Linux-x86_64.tgz"
-    
-    if curl -s --head "$download_url" | grep -q "200\|302"; then
-        log_message "INFO" "Latest release URL valid: $download_url"
-        return 0
-    fi
-    
-    log_message "ERROR" "All download methods failed"
-    return 1
+    log_message "INFO" "S3 installer URL: $download_url"
+    return 0
 }
 
 # Function to install Splunk
@@ -121,9 +111,18 @@ main() {
     
     # Download installer
     log_message "INFO" "Downloading Splunk installer from: $download_url"
-    if ! wget -O splunk-installer.tgz "$download_url"; then
-        log_message "ERROR" "Failed to download Splunk installer"
-        exit 1
+    
+    # Use AWS CLI for S3 URLs, wget for HTTPS URLs
+    if [[ "$download_url" =~ ^s3:// ]]; then
+        if ! aws s3 cp "$download_url" splunk-installer.tgz --region us-east-1; then
+            log_message "ERROR" "Failed to download Splunk installer from S3"
+            exit 1
+        fi
+    else
+        if ! wget -O splunk-installer.tgz "$download_url"; then
+            log_message "ERROR" "Failed to download Splunk installer"
+            exit 1
+        fi
     fi
     
     # Verify download
