@@ -16,6 +16,12 @@ data "aws_subnets" "default" {
   }
 }
 
+# Detect architecture from instance type
+locals {
+  is_arm = can(regex("^(a1|t4g|c6g|c7g|m6g|m7g|r6g|r7g|g5g|im4gn|is4gen|x2gd)", var.instance_type))
+  architecture = local.is_arm ? "arm64" : "x86_64"
+}
+
 # Get latest Amazon Linux 2 AMI
 data "aws_ami" "amazon_linux" {
   most_recent = true
@@ -23,7 +29,7 @@ data "aws_ami" "amazon_linux" {
 
   filter {
     name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+    values = ["amzn2-ami-hvm-*-${local.architecture}-gp2"]
   }
 
   filter {
