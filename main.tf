@@ -132,7 +132,7 @@ resource "aws_ssm_parameter" "instance_id" {
   name  = "/ephemeral-splunk/instance-id"
   type  = "String"
   value = module.splunk_instance.instance_id
-  tags  = local.common_tags
+  tags  = module.standard_tags.tags
 }
 
 output "instance_info" {
