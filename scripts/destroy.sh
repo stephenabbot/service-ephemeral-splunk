@@ -95,7 +95,35 @@ fi
 
 # Step 3: Configure OpenTofu backend
 echo ""
-echo "Step 3: Configuring OpenTofu backend..."
+echo "Step 3: Validating S3 installer parameter..."
+
+# Fetch S3 bucket name for Terraform variable
+if [ -z "${SPLUNK_S3_INSTALLER_PARAM:-}" ]; then
+  print_error "SPLUNK_S3_INSTALLER_PARAM not set in .env"
+  exit 1
+fi
+
+S3_INSTALLER_URL=$(aws ssm get-parameter --region us-east-1 --name "$SPLUNK_S3_INSTALLER_PARAM" --query Parameter.Value --output text 2>/dev/null || echo "")
+
+if [ -n "$S3_INSTALLER_URL" ]; then
+  # Parse S3 bucket from URL
+  if [[ "$S3_INSTALLER_URL" =~ s3://([^/]+)/(.+) ]]; then
+    S3_BUCKET="${BASH_REMATCH[1]}"
+  elif [[ "$S3_INSTALLER_URL" =~ https://([^.]+)\.s3[^/]*\.amazonaws\.com/(.+) ]]; then
+    S3_BUCKET="${BASH_REMATCH[1]}"
+  else
+    print_warning "Could not parse S3 bucket from URL, using placeholder"
+    S3_BUCKET="unknown"
+  fi
+  print_status "S3 bucket: $S3_BUCKET"
+else
+  print_warning "Could not fetch S3 installer URL, using placeholder"
+  S3_BUCKET="unknown"
+fi
+
+# Step 4: Configure OpenTofu backend
+echo ""
+echo "Step 4: Configuring OpenTofu backend..."
 
 STATE_BUCKET=$(aws ssm get-parameter --region us-east-1 --name "/terraform/foundation/s3-state-bucket" --query Parameter.Value --output text 2>/dev/null || echo "")
 DYNAMODB_TABLE=$(aws ssm get-parameter --region us-east-1 --name "/terraform/foundation/dynamodb-lock-table" --query Parameter.Value --output text 2>/dev/null || echo "")
@@ -112,9 +140,9 @@ print_status "Backend configuration:"
 print_status "  Bucket: $STATE_BUCKET"
 print_status "  Key: $BACKEND_KEY"
 
-# Step 4: Initialize OpenTofu
+# Step 5: Initialize OpenTofu
 echo ""
-echo "Step 4: Initializing OpenTofu..."
+echo "Step 5: Initializing OpenTofu..."
 tofu init -reconfigure \
     -backend-config="bucket=$STATE_BUCKET" \
     -backend-config="dynamodb_table=$DYNAMODB_TABLE" \
@@ -123,23 +151,24 @@ tofu init -reconfigure \
 
 # Step 5: Plan destruction
 echo ""
-echo "Step 5: Planning destruction..."
+echo "Step 6: Planning destruction..."
 tofu plan -destroy -out=destroy-plan \
     -var="aws_region=${AWS_REGION:-us-east-1}" \
     -var="deployment_environment=${DEPLOYMENT_ENVIRONMENT:-prd}" \
     -var="tag_owner=${TAG_OWNER:-Platform Team}" \
     -var="ec2_instance_type=${EC2_INSTANCE_TYPE:-t3.large}" \
     -var="ebs_volume_size=${EBS_VOLUME_SIZE:-100}" \
-    -var="cost_alarm_email=${COST_ALARM_EMAIL:-abbotnh@yahoo.com}"
+    -var="cost_alarm_email=${COST_ALARM_EMAIL:-abbotnh@yahoo.com}" \
+    -var="splunk_s3_bucket=$S3_BUCKET"
 
 # Step 6: Apply destruction
 echo ""
-echo "Step 6: Applying destruction..."
+echo "Step 7: Applying destruction..."
 tofu apply destroy-plan
 
 # Step 7: Clean up SSM parameters
 echo ""
-echo "Step 7: Cleaning up SSM parameters..."
+echo "Step 8: Cleaning up SSM parameters..."
 
 # Delete SSM parameters for this project
 SSM_PARAMS=(
@@ -156,7 +185,7 @@ print_status "SSM parameters cleaned up"
 
 # Step 8: Clean up local files
 echo ""
-echo "Step 8: Cleaning up local files..."
+echo "Step 9: Cleaning up local files..."
 rm -f tfplan destroy-plan infrastructure-outputs.json
 
 echo ""
