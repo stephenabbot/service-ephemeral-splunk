@@ -127,6 +127,14 @@ variable "splunk_s3_bucket" {
 }
 
 # Outputs
+# Store instance ID in Parameter Store for easy retrieval by scripts
+resource "aws_ssm_parameter" "instance_id" {
+  name  = "/ephemeral-splunk/instance-id"
+  type  = "String"
+  value = module.splunk_instance.instance_id
+  tags  = local.common_tags
+}
+
 output "instance_info" {
   description = "Splunk instance information"
   value = {

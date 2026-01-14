@@ -26,20 +26,17 @@ export AWS_PAGER=""
 echo "🔍 VERIFYING EPHEMERAL SPLUNK INSTALLATION 🔍"
 echo ""
 
-# Check if infrastructure outputs exist
-if [ ! -f "infrastructure-outputs.json" ]; then
-    print_error "Infrastructure outputs not found. Run ./scripts/deploy.sh first"
+# Get instance ID from Parameter Store
+print_status "Retrieving instance ID from Parameter Store..."
+INSTANCE_ID=$(aws ssm get-parameter --name /ephemeral-splunk/instance-id --query Parameter.Value --output text 2>/dev/null || echo "")
+
+if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "null" ]; then
+    print_error "Could not get instance ID from Parameter Store"
+    print_error "Infrastructure may not be deployed. Run ./scripts/deploy.sh first"
     exit 1
 fi
 
-# Get instance information
-INSTANCE_ID=$(jq -r '.instance_info.value.instance_id' infrastructure-outputs.json)
-LOG_GROUP=$(jq -r '.instance_info.value.log_group_name' infrastructure-outputs.json)
-
-if [ "$INSTANCE_ID" = "null" ] || [ -z "$INSTANCE_ID" ]; then
-    print_error "Could not get instance ID from outputs"
-    exit 1
-fi
+LOG_GROUP="/ec2/ephemeral-splunk"
 
 print_status "Checking infrastructure components..."
 
@@ -75,13 +72,17 @@ else
     print_error "CloudWatch Log Group not found: $LOG_GROUP"
 fi
 
-# Check SNS topic
-print_status "Checking SNS topic..."
-SNS_TOPIC_ARN=$(jq -r '.instance_info.value.sns_topic_arn' infrastructure-outputs.json)
-if aws sns get-topic-attributes --topic-arn "$SNS_TOPIC_ARN" > /dev/null 2>&1; then
-    print_success "SNS topic exists for cost alarms"
-else
-    print_error "SNS topic not found: $SNS_TOPIC_ARN"
+# Check SNS topic (retrieve from outputs for now since it's not critical for operations)
+if [ -f "infrastructure-outputs.json" ]; then
+    print_status "Checking SNS topic..."
+    SNS_TOPIC_ARN=$(jq -r '.instance_info.value.sns_topic_arn' infrastructure-outputs.json 2>/dev/null || echo "")
+    if [ -n "$SNS_TOPIC_ARN" ] && [ "$SNS_TOPIC_ARN" != "null" ]; then
+        if aws sns get-topic-attributes --topic-arn "$SNS_TOPIC_ARN" > /dev/null 2>&1; then
+            print_success "SNS topic exists for cost alarms"
+        else
+            print_warning "SNS topic not found: $SNS_TOPIC_ARN"
+        fi
+    fi
 fi
 
 # Only check Splunk if instance is running
@@ -142,8 +143,6 @@ if [ "$INSTANCE_STATE" = "running" ]; then
     # Check if Splunk web interface is responding
     print_status "Checking Splunk web interface..."
     
-    INSTANCE_IP=$(jq -r '.instance_info.value.instance_ip' infrastructure-outputs.json)
-    
     WEB_CHECK_COMMAND_ID=$(aws ssm send-command \
         --instance-ids "$INSTANCE_ID" \
         --document-name "AWS-RunShellScript" \
@@ -182,9 +181,9 @@ echo ""
 
 if [ "$INSTANCE_STATE" = "running" ]; then
     echo "🔗 Connection Commands:"
-    echo "  • SSM Shell: $(jq -r '.connection_info.value.ssm_command' infrastructure-outputs.json)"
-    echo "  • Port Forward: $(jq -r '.connection_info.value.port_forward_command' infrastructure-outputs.json)"
-    echo "  • Splunk URL: $(jq -r '.connection_info.value.splunk_url' infrastructure-outputs.json)"
+    echo "  • SSM Shell: aws ssm start-session --target $INSTANCE_ID"
+    echo "  • Port Forward: aws ssm start-session --target $INSTANCE_ID --document-name AWS-StartPortForwardingSession --parameters 'portNumber=8000,localPortNumber=8000'"
+    echo "  • Splunk URL: http://localhost:8000"
     echo "  • Default Login: admin / changeme"
     echo ""
     echo "📊 Monitoring:"
