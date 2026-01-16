@@ -90,7 +90,7 @@ This project provides automated infrastructure for deploying ephemeral Splunk En
 
 ```
 ephemeral-splunk/
-├── .env                    # Non-sensitive configuration defaults
+├── config.env              # Non-sensitive configuration defaults
 ├── scripts/
 │   ├── deploy.sh          # Create complete stack with fresh Splunk
 │   ├── destroy.sh         # Destroy complete stack
@@ -139,7 +139,7 @@ ephemeral-splunk/
 
 ### Configuration Management
 
-**Environment Variables (.env)**:
+**Environment Variables (config.env)**:
 ```bash
 AWS_REGION=us-east-1
 DEPLOYMENT_ENVIRONMENT=prd

@@ -26,3 +26,6 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Configuration file (contains non-sensitive defaults)
+config.env

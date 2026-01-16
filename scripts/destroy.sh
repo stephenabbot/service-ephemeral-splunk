@@ -9,9 +9,9 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # Load environment variables
-if [ -f ".env" ]; then
+if [ -f "config.env" ]; then
     set -a
-    source .env
+    source config.env
     set +a
 fi
 
@@ -99,7 +99,7 @@ echo "Step 3: Validating S3 installer parameter..."
 
 # Fetch S3 bucket name for Terraform variable
 if [ -z "${SPLUNK_S3_INSTALLER_PARAM:-}" ]; then
-  print_error "SPLUNK_S3_INSTALLER_PARAM not set in .env"
+  print_error "SPLUNK_S3_INSTALLER_PARAM not set in config.env"
   exit 1
 fi
 

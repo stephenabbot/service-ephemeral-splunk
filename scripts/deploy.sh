@@ -9,9 +9,9 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # Load environment variables
-if [ -f ".env" ]; then
+if [ -f "config.env" ]; then
     set -a
-    source .env
+    source config.env
     set +a
 fi
 
@@ -32,7 +32,7 @@ echo ""
 echo "Step 2: Validating S3-hosted Splunk installer..."
 
 if [ -z "${SPLUNK_S3_INSTALLER_PARAM:-}" ]; then
-  echo "❌ SPLUNK_S3_INSTALLER_PARAM not set in .env"
+  echo "❌ SPLUNK_S3_INSTALLER_PARAM not set in config.env"
   exit 1
 fi
 
