@@ -13,6 +13,8 @@ This project requires the [splunk-s3-installer](https://github.com/stephenabbot/
 3. **Verify**: `./scripts/verify-installation.sh`
 4. **Connect**: Use SSM Session Manager and port forwarding
 5. **Destroy**: `./scripts/destroy.sh` when finished
+6. **Connect locally** aws ssm start-session --target i-0fdf214380b572370 --document-name AWS-StartPortForwardingSession --parameters 'portNumber=8000,localPortNumber=8000'
+7. Open browser to: <http://localhost:8000>
 
 ## Architecture
 
@@ -40,10 +42,11 @@ This project requires the [splunk-s3-installer](https://github.com/stephenabbot/
 ## Manual Steps
 
 After deployment completes:
+
 1. Wait 5-10 minutes for Splunk installation
 2. Connect via SSM Session Manager
 3. Set up port forwarding: `aws ssm start-session --target INSTANCE_ID --document-name AWS-StartPortForwardingSession --parameters 'portNumber=8000,localPortNumber=8000'`
-4. Access Splunk at http://localhost:8000
+4. Access Splunk at <http://localhost:8000>
 5. Login with admin/changeme
 6. Apply Splunk license manually through web interface
 
