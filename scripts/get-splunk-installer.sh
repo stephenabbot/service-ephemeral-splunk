@@ -3,12 +3,9 @@
 # This script handles downloading and installing Splunk Enterprise
 # Designed to be stored in SSM Parameter Store and executed by user data script
 
-set -euo pipefail
-
-# Configuration
-LOG_GROUP="/ec2/ephemeral-splunk"
-INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-LOG_STREAM="$INSTANCE_ID/splunk-installer.log"
+# Redirect all output to log file and console
+exec > >(tee -a /var/log/splunk-installer.log) 2>&1
+set -euxo pipefail
 
 # Logging function
 log_message() {
@@ -17,20 +14,7 @@ log_message() {
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
     
     echo "[$timestamp] [$level] $message"
-    
-    # Send to CloudWatch Logs
-    aws logs put-log-events \
-        --log-group-name "$LOG_GROUP" \
-        --log-stream-name "$LOG_STREAM" \
-        --log-events timestamp=$(date +%s000),message="[$level] $message" \
-        --region us-east-1 2>/dev/null || true
 }
-
-# Create log stream if it doesn't exist
-aws logs create-log-stream \
-    --log-group-name "$LOG_GROUP" \
-    --log-stream-name "$LOG_STREAM" \
-    --region us-east-1 2>/dev/null || true
 
 log_message "INFO" "Starting Splunk Enterprise installation"
 
@@ -56,19 +40,19 @@ install_splunk() {
     
     log_message "INFO" "Installing Splunk from $installer_file"
     
-    # Extract Splunk
-    if ! tar -xzf "$installer_file" -C /opt/; then
-        log_message "ERROR" "Failed to extract Splunk installer"
+    # Install Splunk RPM
+    if ! yum install -y "$installer_file"; then
+        log_message "ERROR" "Failed to install Splunk RPM"
         return 1
     fi
     
-    # Create splunk user if needed
+    # Verify splunk user exists (created by RPM)
     if ! id splunk &>/dev/null; then
-        useradd -r -m -d /opt/splunk -s /bin/bash splunk
-        log_message "INFO" "Created splunk user"
+        log_message "ERROR" "Splunk user not created by RPM installation"
+        return 1
     fi
     
-    # Set ownership
+    # Ensure proper ownership
     chown -R splunk:splunk /opt/splunk
     
     # Create user-seed.conf for admin user
@@ -114,34 +98,34 @@ main() {
     
     # Use AWS CLI for S3 URLs, wget for HTTPS URLs
     if [[ "$download_url" =~ ^s3:// ]]; then
-        if ! aws s3 cp "$download_url" splunk-installer.tgz --region us-east-1; then
+        if ! aws s3 cp "$download_url" splunk-installer.rpm --region us-east-1; then
             log_message "ERROR" "Failed to download Splunk installer from S3"
             exit 1
         fi
     else
-        if ! wget -O splunk-installer.tgz "$download_url"; then
+        if ! wget -O splunk-installer.rpm "$download_url"; then
             log_message "ERROR" "Failed to download Splunk installer"
             exit 1
         fi
     fi
     
     # Verify download
-    if [ ! -f splunk-installer.tgz ] || [ ! -s splunk-installer.tgz ]; then
+    if [ ! -f splunk-installer.rpm ] || [ ! -s splunk-installer.rpm ]; then
         log_message "ERROR" "Downloaded file is missing or empty"
         exit 1
     fi
     
-    # Check if it's actually a tar.gz file
-    if ! file splunk-installer.tgz | grep -q "gzip compressed"; then
-        log_message "ERROR" "Downloaded file is not a valid gzip archive"
-        head -c 500 splunk-installer.tgz | log_message "ERROR" "File content preview: $(cat)"
+    # Check if it's actually an RPM file
+    if ! file splunk-installer.rpm | grep -q "RPM"; then
+        log_message "ERROR" "Downloaded file is not a valid RPM package"
+        head -c 500 splunk-installer.rpm | log_message "ERROR" "File content preview: $(cat)"
         exit 1
     fi
     
-    log_message "INFO" "Download successful, file size: $(wc -c < splunk-installer.tgz) bytes"
+    log_message "INFO" "Download successful, file size: $(wc -c < splunk-installer.rpm) bytes"
     
     # Install Splunk
-    if ! install_splunk splunk-installer.tgz; then
+    if ! install_splunk splunk-installer.rpm; then
         log_message "ERROR" "Splunk installation failed"
         exit 1
     fi
@@ -156,7 +140,7 @@ main() {
     fi
     
     # Cleanup
-    rm -f splunk-installer.tgz
+    rm -f splunk-installer.rpm
     
     log_message "INFO" "Splunk installation process completed"
 }
