@@ -75,6 +75,7 @@ module "splunk_instance" {
   cost_alarm_email    = var.cost_alarm_email
   cost_thresholds     = var.cost_thresholds
   splunk_s3_bucket    = var.splunk_s3_bucket
+  use_spot_instances  = var.use_spot_instances
   tags                = module.standard_tags.tags
 }
 
@@ -124,6 +125,12 @@ variable "cost_thresholds" {
 variable "splunk_s3_bucket" {
   description = "S3 bucket containing Splunk installer"
   type        = string
+}
+
+variable "use_spot_instances" {
+  description = "Use spot instances with capacity-optimized strategy (60-70% cost savings)"
+  type        = bool
+  default     = false
 }
 
 # Outputs

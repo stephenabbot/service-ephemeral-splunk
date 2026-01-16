@@ -163,6 +163,7 @@ tofu plan -out=tfplan \
     -var="ec2_instance_type=${EC2_INSTANCE_TYPE:-t3.large}" \
     -var="ebs_volume_size=${EBS_VOLUME_SIZE:-100}" \
     -var="cost_alarm_email=${COST_ALARM_EMAIL:-abbotnh@yahoo.com}" \
+    -var="use_spot_instances=${USE_SPOT_INSTANCES:-false}" \
     -var="splunk_s3_bucket=$S3_BUCKET"
 
 # Step 7: Apply deployment

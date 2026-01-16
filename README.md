@@ -20,6 +20,7 @@ This project requires the [splunk-s3-installer](https://github.com/stephenabbot/
 
 - **True Fresh Install**: Complete deploy/destroy cycles with zero idle costs
 - **EC2 Instance**: t3.large with Amazon Linux, 100GB gp3 EBS (delete-on-termination)
+- **Spot Instance Support**: Optional capacity-optimized spot instances for 60-70% cost savings
 - **Access**: SSM Session Manager with port forwarding for Splunk web UI
 - **Monitoring**: CloudWatch Logs, cost alarms at $5/$10/$20 thresholds
 - **Security**: No inbound access, outbound HTTPS only for SSM and downloads
@@ -35,9 +36,32 @@ This project requires the [splunk-s3-installer](https://github.com/stephenabbot/
 ## Cost Model
 
 - **Idle**: $0 (no infrastructure when destroyed)
-- **Active**: ~$0.08/hour for t3.large + EBS prorated
-- **Typical 3-hour session**: ~$0.25
-- **Annual usage (weekly 3-hour sessions)**: ~$13/year
+- **Active (on-demand)**: ~$0.08/hour for t3.large + EBS prorated
+- **Active (spot)**: ~$0.03/hour for t3.large spot + EBS prorated (60-70% savings)
+- **Typical 3-hour session (on-demand)**: ~$0.25
+- **Typical 3-hour session (spot)**: ~$0.10
+- **Annual usage (weekly 3-hour sessions, on-demand)**: ~$13/year
+- **Annual usage (weekly 3-hour sessions, spot)**: ~$5/year
+
+### Spot Instance Configuration
+
+Enable spot instances in `config.env`:
+```bash
+USE_SPOT_INSTANCES=true
+```
+
+**Spot instance features:**
+- **Capacity-optimized strategy**: AWS automatically selects pools with lowest interruption risk
+- **Persistent requests**: Instance stops (not terminates) on interruption
+- **EBS preservation**: Volume persists when spot instance is interrupted
+- **No max price**: Defaults to on-demand price cap
+- **60-70% cost savings**: Typical savings vs on-demand pricing
+
+**Interruption handling:**
+- Instance stops gracefully on spot interruption
+- EBS volume preserved with all data intact
+- Restart with `./scripts/start-instance.sh` when capacity available
+- 2-minute warning before interruption (CloudWatch Events)
 
 ## Manual Steps
 

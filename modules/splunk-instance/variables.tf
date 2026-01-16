@@ -32,3 +32,9 @@ variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)
 }
+
+variable "use_spot_instances" {
+  description = "Use spot instances with capacity-optimized strategy"
+  type        = bool
+  default     = false
+}
