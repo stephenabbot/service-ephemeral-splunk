@@ -48,7 +48,7 @@ case "$INSTANCE_STATE" in
         print_success "Instance is already running"
         ;;
     "stopped")
-        print_status "Starting stopped spot instance..."
+        print_status "Starting stopped instance..."
         aws ec2 start-instances --instance-ids "$INSTANCE_ID" > /dev/null
         
         print_status "Waiting for instance to start..."

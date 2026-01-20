@@ -5,7 +5,7 @@ This project provides automated infrastructure for deploying ephemeral Splunk En
 ## What This Project Does
 
 **Core Functionality:**
-- Deploys a fresh Splunk Enterprise instance on AWS EC2 (spot instance)
+- Deploys a fresh Splunk Enterprise instance on AWS EC2
 - Automatically configures Splunk HEC for data ingestion
 - Creates a CloudFront distribution with custom domain (splunk.bittikens.com)
 - Provides secure HEC endpoint for AWS Kinesis Firehose integration
@@ -15,7 +15,6 @@ This project provides automated infrastructure for deploying ephemeral Splunk En
 - **True Fresh Install**: Complete deploy/destroy cycles with zero idle costs
 - **CloudFront Integration**: Secure, scalable HEC endpoint with custom domain and ACM certificate
 - **Firehose-Ready**: HEC configured for AWS Kinesis Firehose data ingestion
-- **Spot Instance Support**: 60-70% cost savings with capacity-optimized spot instances
 - **Elastic IP**: Public IP for CloudFront origin connectivity
 - **Access**: SSM Session Manager with port forwarding for Splunk web UI
 - **Monitoring**: CloudWatch Logs, cost alarms at $5/$10/$20 thresholds
@@ -49,9 +48,9 @@ AWS Kinesis Firehose → CloudFront (HTTPS) → EC2 Instance (HTTP:8088) → Spl
 ### Component Details
 
 **EC2 Instance:**
-- Spot instance (m5.xlarge) with capacity-optimized strategy
+- t3.medium instance type
 - Amazon Linux 2 with automatic architecture detection
-- 50GB gp3 EBS volume (delete-on-termination: false for spot interruption recovery)
+- 50GB gp3 EBS volume (delete-on-termination: false)
 - Elastic IP for stable public endpoint
 - Security group: Ingress from CloudFront prefix list on port 8088, egress for SSM/downloads
 
@@ -250,19 +249,18 @@ aws ssm get-parameter --name /ephemeral-splunk/cloudfront-endpoint --query Param
 **Idle Costs**: $0 (no infrastructure when destroyed)
 
 **Active Costs (per hour):**
-- EC2 spot instance (m5.xlarge): ~$0.05/hour (60-70% savings vs on-demand)
+- EC2 instance (t3.medium): ~$0.042/hour
 - EBS (50GB gp3): ~$0.007/hour ($5/month prorated)
 - CloudFront: $0.085/GB data transfer + $0.01/10,000 requests
-- **Total**: ~$0.06/hour + data transfer
+- **Total**: ~$0.05/hour + data transfer
 
 **Typical Usage:**
-- 3-hour session: ~$0.20 + data transfer
-- Weekly 3-hour sessions: ~$10/year + data transfer
+- 3-hour session: ~$0.15 + data transfer
+- Weekly 3-hour sessions: ~$8/year + data transfer
 - Stopped instance (no compute): ~$5/month (EBS only)
 
 **Cost Optimization:**
 - Destroy infrastructure when not in use ($0 idle cost)
-- Use spot instances (60-70% savings)
 - Stop instance between sessions (saves compute, keeps data)
 - Monitor with CloudWatch billing alarms
 
@@ -273,7 +271,7 @@ aws ssm get-parameter --name /ephemeral-splunk/cloudfront-endpoint --query Param
 AWS_REGION=us-east-1
 DEPLOYMENT_ENVIRONMENT=prd
 TAG_OWNER="Platform Team"
-EC2_INSTANCE_TYPE=m5.xlarge
+EC2_INSTANCE_TYPE=t3.medium
 EBS_VOLUME_SIZE=50
 COST_ALARM_EMAIL=abbotnh@yahoo.com
 COST_THRESHOLDS="5,10,20"
@@ -315,11 +313,6 @@ After deployment completes:
 - Token may have changed after Splunk restart
 - Retrieve current token: `./scripts/verify-installation.sh`
 - Update Parameter Store if needed
-
-**Spot instance interrupted:**
-- Instance stops (not terminates) on interruption
-- EBS volume preserved with all data
-- Restart with `./scripts/start-instance.sh`
 
 ## Integration
 

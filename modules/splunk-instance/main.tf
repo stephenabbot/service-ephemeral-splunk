@@ -250,17 +250,6 @@ resource "aws_instance" "splunk_instance" {
   iam_instance_profile    = aws_iam_instance_profile.splunk_instance_profile.name
   user_data               = local.user_data
 
-  # Spot instance configuration with capacity-optimized strategy
-  instance_market_options {
-    market_type = "spot"
-    
-    spot_options {
-      spot_instance_type             = "persistent"
-      instance_interruption_behavior = "stop"
-      # No max_price - defaults to on-demand price with capacity-optimized
-    }
-  }
-
   root_block_device {
     volume_type           = "gp3"
     volume_size           = var.volume_size
