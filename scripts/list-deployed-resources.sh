@@ -66,16 +66,6 @@ echo "  Key:   /ephemeral-splunk/hec-token"
 echo "  Value: ${HEC_TOKEN:0:8}...${HEC_TOKEN: -8}"
 echo ""
 
-ORIGIN_SECRET=$(aws ssm get-parameter --name /ephemeral-splunk/origin-secret --with-decryption --query Parameter.Value --output text 2>/dev/null || echo "not configured")
-echo "Origin Secret (CloudFront → EC2):"
-echo "  Key:   /ephemeral-splunk/origin-secret"
-if [ "$ORIGIN_SECRET" != "not configured" ]; then
-    echo "  Value: ${ORIGIN_SECRET:0:8}...${ORIGIN_SECRET: -8}"
-else
-    echo "  Value: $ORIGIN_SECRET"
-fi
-echo ""
-
 CLOUDFRONT_ENDPOINT=$(aws ssm get-parameter --name /ephemeral-splunk/cloudfront-endpoint --query Parameter.Value --output text 2>/dev/null || echo "not configured")
 echo "CloudFront Endpoint:"
 echo "  Key:   /ephemeral-splunk/cloudfront-endpoint"

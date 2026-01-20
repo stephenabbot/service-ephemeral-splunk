@@ -56,14 +56,12 @@ tofu init -reconfigure \
 
 # Get variables from Parameter Store
 PRIVATE_IP=$(aws ec2 describe-instances --instance-ids "$(aws ssm get-parameter --name /ephemeral-splunk/instance-id --query Parameter.Value --output text)" --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text 2>/dev/null || echo "127.0.0.1")
-ORIGIN_SECRET=$(aws ssm get-parameter --name /ephemeral-splunk/origin-secret --with-decryption --query Parameter.Value --output text 2>/dev/null || echo "placeholder")
 PROJECT_NAME=$(git remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/][^/]+/([^/.]+)(\.git)?$|\1|' || echo "ephemeral-splunk")
 
 print_status "Planning destruction..."
 tofu plan -destroy -out=destroy-plan \
     -var="aws_region=${AWS_REGION:-us-east-1}" \
     -var="private_ip=$PRIVATE_IP" \
-    -var="origin_secret=$ORIGIN_SECRET" \
     -var="origin_protocol=http" \
     -var="project_name=$PROJECT_NAME" \
     -var="github_repo=$GITHUB_REPO" \

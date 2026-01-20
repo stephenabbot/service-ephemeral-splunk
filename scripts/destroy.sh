@@ -188,7 +188,7 @@ SSM_PARAMS=(
     "/ephemeral-splunk/instance-id"
     "/ephemeral-splunk/instance-ip"
     "/ephemeral-splunk/log-group"
-    "/ephemeral-splunk/get-splunk-installer"
+    "/ephemeral-splunk/hec-token"
 )
 
 for param in "${SSM_PARAMS[@]}"; do

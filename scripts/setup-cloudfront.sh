@@ -71,37 +71,72 @@ else
     exit 1
 fi
 
-# Enable HEC and get/create token via SSM
-print_status "Enabling Splunk HEC..."
-COMMAND_ID=$(aws ssm send-command \
-    --instance-ids "$INSTANCE_ID" \
-    --document-name "AWS-RunShellScript" \
-    --parameters 'commands=[
-"sudo -u splunk /opt/splunk/bin/splunk http-event-collector enable -uri https://localhost:8089 -auth admin:changeme 2>&1",
-"sudo -u splunk /opt/splunk/bin/splunk http-event-collector delete firehose-token -uri https://localhost:8089 -auth admin:changeme 2>&1 || true",
-"sudo -u splunk /opt/splunk/bin/splunk http-event-collector create firehose-token -uri https://localhost:8089 -auth admin:changeme -description \"Firehose ingestion token\" -disabled 0 -index main -indexes main -use-ack 1 2>&1 | grep \"token=\" | cut -d= -f2"
+# Check for existing HEC token
+print_status "Checking for existing HEC token..."
+EXISTING_TOKEN=$(aws ssm get-parameter --name /ephemeral-splunk/hec-token --with-decryption --query Parameter.Value --output text 2>/dev/null || echo "")
+
+if [ -n "$EXISTING_TOKEN" ]; then
+    print_status "Found existing token in Parameter Store, verifying in Splunk..."
+    
+    # Verify token exists in Splunk
+    COMMAND_ID=$(aws ssm send-command \
+        --instance-ids "$INSTANCE_ID" \
+        --document-name "AWS-RunShellScript" \
+        --parameters 'commands=[
+"sudo -u splunk /opt/splunk/bin/splunk http-event-collector list -uri https://localhost:8089 -auth admin:changeme 2>&1 | grep -q \"firehose-token\" && echo \"exists\" || echo \"missing\""
 ]' \
-    --query 'Command.CommandId' \
-    --output text)
-
-sleep 10
-
-HEC_TOKEN=$(aws ssm get-command-invocation \
-    --command-id "$COMMAND_ID" \
-    --instance-id "$INSTANCE_ID" \
-    --query 'StandardOutputContent' \
-    --output text | grep -E '^[a-f0-9-]{36}$' | head -1)
-
-if [ -z "$HEC_TOKEN" ]; then
-    print_error "Failed to create HEC token"
-    exit 1
+        --query 'Command.CommandId' \
+        --output text)
+    
+    sleep 5
+    
+    TOKEN_STATUS=$(aws ssm get-command-invocation \
+        --command-id "$COMMAND_ID" \
+        --instance-id "$INSTANCE_ID" \
+        --query 'StandardOutputContent' \
+        --output text | tr -d '\n')
+    
+    if [ "$TOKEN_STATUS" = "exists" ]; then
+        print_success "HEC token verified in Splunk, reusing existing token"
+        HEC_TOKEN="$EXISTING_TOKEN"
+    else
+        print_warning "Token in Parameter Store but not in Splunk, will recreate"
+        EXISTING_TOKEN=""
+    fi
 fi
 
-print_success "HEC token created with indexer acknowledgment enabled"
-
-# Store HEC token
-aws ssm put-parameter --name /ephemeral-splunk/hec-token --value "$HEC_TOKEN" --type SecureString --overwrite
-print_success "HEC token stored in Parameter Store"
+# Create token if needed
+if [ -z "$EXISTING_TOKEN" ]; then
+    print_status "Creating new HEC token..."
+    COMMAND_ID=$(aws ssm send-command \
+        --instance-ids "$INSTANCE_ID" \
+        --document-name "AWS-RunShellScript" \
+        --parameters 'commands=[
+"sudo -u splunk /opt/splunk/bin/splunk http-event-collector enable -uri https://localhost:8089 -auth admin:changeme 2>&1",
+"sudo -u splunk /opt/splunk/bin/splunk http-event-collector create firehose-token -uri https://localhost:8089 -auth admin:changeme -description \"Firehose ingestion token\" -disabled 0 -index main -indexes main -use-ack 1 2>&1 | grep \"token=\" | cut -d= -f2"
+]' \
+        --query 'Command.CommandId' \
+        --output text)
+    
+    sleep 10
+    
+    HEC_TOKEN=$(aws ssm get-command-invocation \
+        --command-id "$COMMAND_ID" \
+        --instance-id "$INSTANCE_ID" \
+        --query 'StandardOutputContent' \
+        --output text | grep -E '^[a-f0-9-]{36}$' | head -1)
+    
+    if [ -z "$HEC_TOKEN" ]; then
+        print_error "Failed to create HEC token"
+        exit 1
+    fi
+    
+    print_success "HEC token created with indexer acknowledgment enabled"
+    
+    # Store HEC token
+    aws ssm put-parameter --name /ephemeral-splunk/hec-token --value "$HEC_TOKEN" --type SecureString --overwrite
+    print_success "HEC token stored in Parameter Store"
+fi
 
 # Test HEC protocol
 print_status "Testing HEC protocol..."
@@ -135,13 +170,6 @@ elif [ "$HTTPS_CODE" = "200" ]; then
 else
     print_error "HEC not responding on either protocol (HTTP: $HTTP_CODE, HTTPS: $HTTPS_CODE)"
     exit 1
-fi
-
-# Generate origin secret (only if deploying CloudFront)
-if [ "$SKIP_CLOUDFRONT" = false ]; then
-    ORIGIN_SECRET=$(openssl rand -hex 32)
-    aws ssm put-parameter --name /ephemeral-splunk/origin-secret --value "$ORIGIN_SECRET" --type SecureString --overwrite
-    print_success "Origin secret generated and stored"
 fi
 
 # Exit early if CloudFront already exists
@@ -184,7 +212,6 @@ provider "aws" {
 
 variable "aws_region" { type = string }
 variable "private_ip" { type = string }
-variable "origin_secret" { type = string }
 variable "origin_protocol" { type = string }
 variable "project_name" { type = string }
 variable "github_repo" { type = string }
@@ -243,11 +270,6 @@ resource "aws_cloudfront_distribution" "splunk" {
       https_port             = 8088
       origin_protocol_policy = var.origin_protocol == "https" ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
-    }
-
-    custom_header {
-      name  = "X-Origin-Verify"
-      value = var.origin_secret
     }
   }
 
@@ -360,7 +382,6 @@ print_status "Planning CloudFront deployment..."
 tofu plan -out=cfplan \
     -var="aws_region=${AWS_REGION:-us-east-1}" \
     -var="private_ip=$ORIGIN_DOMAIN" \
-    -var="origin_secret=$ORIGIN_SECRET" \
     -var="origin_protocol=$ORIGIN_PROTOCOL" \
     -var="project_name=$PROJECT_NAME" \
     -var="github_repo=$GITHUB_REPO" \
@@ -391,10 +412,8 @@ echo "📋 Configuration:"
 echo "  • CloudFront Distribution: $DISTRIBUTION_ID"
 echo "  • Endpoint URL: $ENDPOINT_URL"
 echo "  • HEC Token: (stored in /ephemeral-splunk/hec-token)"
-echo "  • Origin Secret: (stored in /ephemeral-splunk/origin-secret)"
 echo ""
 echo "🔥 Firehose Configuration:"
 echo "  • Endpoint: $ENDPOINT_URL/services/collector"
-echo "  • Custom Header: X-Origin-Verify: $ORIGIN_SECRET"
 echo "  • Authentication Token: (retrieve from Parameter Store)"
 echo ""

@@ -20,7 +20,6 @@ provider "aws" {
 
 variable "aws_region" { type = string }
 variable "private_ip" { type = string }
-variable "origin_secret" { type = string }
 variable "origin_protocol" { type = string }
 variable "project_name" { type = string }
 variable "github_repo" { type = string }
@@ -79,11 +78,6 @@ resource "aws_cloudfront_distribution" "splunk" {
       https_port             = 8088
       origin_protocol_policy = var.origin_protocol == "https" ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
-    }
-
-    custom_header {
-      name  = "X-Origin-Verify"
-      value = var.origin_secret
     }
   }
 

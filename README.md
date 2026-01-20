@@ -33,16 +33,14 @@ AWS Kinesis Firehose → CloudFront (HTTPS) → EC2 Instance (HTTP:8088) → Spl
 
 **Data Flow:**
 1. Kinesis Firehose sends events to `https://splunk.bittikens.com/services/collector/event`
-2. CloudFront validates custom origin header (`X-Origin-Verify`)
-3. CloudFront forwards to EC2 instance via HTTP on port 8088
-4. Splunk HEC ingests events into the `main` index
-5. Failed events backed up to S3 (Firehose configuration)
+2. CloudFront forwards to EC2 instance via HTTP on port 8088
+3. Splunk HEC ingests events into the `main` index
+4. Failed events backed up to S3 (Firehose configuration)
 
 **Security Model:**
 - **Client → CloudFront**: HTTPS with ACM certificate
 - **CloudFront → Origin**: HTTP (Splunk uses self-signed cert, CloudFront can't validate)
 - **Security Group**: Port 8088 only accessible from CloudFront prefix list
-- **Origin Header**: Random secret prevents direct access without CloudFront
 - **No Public Access**: SSM Session Manager for shell access (no SSH)
 
 ### Component Details
@@ -66,7 +64,6 @@ AWS Kinesis Firehose → CloudFront (HTTPS) → EC2 Instance (HTTP:8088) → Spl
 - ACM certificate for HTTPS
 - Origin: EC2 public DNS/IP on port 8088
 - Origin protocol: HTTP
-- Custom header: X-Origin-Verify with random secret
 - Caching: Disabled (TTL=0)
 
 **Cost Monitoring:**
@@ -119,12 +116,10 @@ aws ssm start-session --target $INSTANCE_ID \
 
 **Firehose Configuration:**
 ```
-Destination: Splunk
-Splunk endpoint: https://splunk.bittikens.com/services/collector/event
-Authentication token: (retrieve from Parameter Store: /ephemeral-splunk/hec-token)
-
-Custom HTTP Headers:
-  X-Origin-Verify: (retrieve from Parameter Store: /ephemeral-splunk/origin-secret)
+Destination: Splunk (use SplunkDestinationConfiguration)
+HECEndpoint: https://splunk.bittikens.com/services/collector/event
+HECToken: (retrieve from Parameter Store: /ephemeral-splunk/hec-token)
+HECEndpointType: Event
 
 S3 Backup: Enabled (for failed events)
 ```
@@ -133,9 +128,6 @@ S3 Backup: Enabled (for failed events)
 ```bash
 # HEC Token
 aws ssm get-parameter --name /ephemeral-splunk/hec-token --with-decryption --query Parameter.Value --output text
-
-# Origin Secret
-aws ssm get-parameter --name /ephemeral-splunk/origin-secret --with-decryption --query Parameter.Value --output text
 
 # CloudFront Endpoint
 aws ssm get-parameter --name /ephemeral-splunk/cloudfront-endpoint --query Parameter.Value --output text
@@ -281,7 +273,6 @@ SPLUNK_S3_INSTALLER_PARAM=/splunk-s3-installer/installer-url
 **Parameter Store Values** (created by scripts):
 - `/ephemeral-splunk/instance-id` - EC2 instance ID
 - `/ephemeral-splunk/hec-token` - Splunk HEC authentication token (SecureString)
-- `/ephemeral-splunk/origin-secret` - CloudFront origin verification header (SecureString)
 - `/ephemeral-splunk/cloudfront-distribution-id` - CloudFront distribution ID
 - `/ephemeral-splunk/cloudfront-endpoint` - Public HEC endpoint URL
 
