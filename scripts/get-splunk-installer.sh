@@ -3,12 +3,9 @@
 # This script handles downloading and installing Splunk Enterprise
 # Designed to be stored in SSM Parameter Store and executed by user data script
 
-set -euo pipefail
-
-# Configuration
-LOG_GROUP="/ec2/ephemeral-splunk"
-INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-LOG_STREAM="$INSTANCE_ID/splunk-installer.log"
+# Redirect all output to log file and console
+exec > >(tee -a /var/log/splunk-installer.log) 2>&1
+set -euxo pipefail
 
 # Logging function
 log_message() {
@@ -17,47 +14,24 @@ log_message() {
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
     
     echo "[$timestamp] [$level] $message"
-    
-    # Send to CloudWatch Logs
-    aws logs put-log-events \
-        --log-group-name "$LOG_GROUP" \
-        --log-stream-name "$LOG_STREAM" \
-        --log-events timestamp=$(date +%s000),message="[$level] $message" \
-        --region us-east-1 2>/dev/null || true
 }
-
-# Create log stream if it doesn't exist
-aws logs create-log-stream \
-    --log-group-name "$LOG_GROUP" \
-    --log-stream-name "$LOG_STREAM" \
-    --region us-east-1 2>/dev/null || true
 
 log_message "INFO" "Starting Splunk Enterprise installation"
 
-# Function to download Splunk
+# Function to download Splunk from S3
 download_splunk() {
-    # Method 1: Try direct versioned download
-    log_message "INFO" "Attempting direct versioned download"
-    local version="9.1.2"
-    local build="b6b9c8185839"
-    download_url="https://download.splunk.com/products/splunk/releases/${version}/linux/splunk-${version}-${build}-Linux-x86_64.tgz"
+    log_message "INFO" "Fetching S3 installer URL from Parameter Store"
     
-    if curl -s --head "$download_url" | grep -q "200"; then
-        log_message "INFO" "Direct versioned URL valid: $download_url"
-        return 0
+    local param_name="/splunk-s3-installer/installer-url"
+    download_url=$(aws ssm get-parameter --region us-east-1 --name "$param_name" --query Parameter.Value --output text 2>/dev/null || echo "")
+    
+    if [ -z "$download_url" ]; then
+        log_message "ERROR" "Failed to retrieve installer URL from Parameter Store: $param_name"
+        return 1
     fi
     
-    # Method 2: Try latest release
-    log_message "INFO" "Direct version failed, trying latest release"
-    download_url="https://download.splunk.com/products/splunk/releases/latest/linux/splunk-latest-Linux-x86_64.tgz"
-    
-    if curl -s --head "$download_url" | grep -q "200\|302"; then
-        log_message "INFO" "Latest release URL valid: $download_url"
-        return 0
-    fi
-    
-    log_message "ERROR" "All download methods failed"
-    return 1
+    log_message "INFO" "S3 installer URL: $download_url"
+    return 0
 }
 
 # Function to install Splunk
@@ -66,19 +40,19 @@ install_splunk() {
     
     log_message "INFO" "Installing Splunk from $installer_file"
     
-    # Extract Splunk
-    if ! tar -xzf "$installer_file" -C /opt/; then
-        log_message "ERROR" "Failed to extract Splunk installer"
+    # Install Splunk RPM
+    if ! yum install -y "$installer_file"; then
+        log_message "ERROR" "Failed to install Splunk RPM"
         return 1
     fi
     
-    # Create splunk user if needed
+    # Verify splunk user exists (created by RPM)
     if ! id splunk &>/dev/null; then
-        useradd -r -m -d /opt/splunk -s /bin/bash splunk
-        log_message "INFO" "Created splunk user"
+        log_message "ERROR" "Splunk user not created by RPM installation"
+        return 1
     fi
     
-    # Set ownership
+    # Ensure proper ownership
     chown -R splunk:splunk /opt/splunk
     
     # Create user-seed.conf for admin user
@@ -102,8 +76,43 @@ EOF
     /opt/splunk/bin/splunk enable boot-start -user splunk --accept-license --answer-yes
     
     # Basic configuration
-    sudo -u splunk /opt/splunk/bin/splunk http-event-collector enable -auth admin:changeme
     sudo -u splunk /opt/splunk/bin/splunk add index test_data -auth admin:changeme
+    
+    # Configure HEC for CloudFront integration
+    log_message "INFO" "Configuring HTTP Event Collector for CloudFront"
+    
+    # Enable HEC globally with HTTP (no SSL)
+    sudo -u splunk /opt/splunk/bin/splunk http-event-collector enable \
+        -uri https://localhost:8089 \
+        -auth admin:changeme \
+        -enable-ssl 0
+    
+    # Create HEC token with indexer acknowledgment enabled
+    HEC_TOKEN=$(sudo -u splunk /opt/splunk/bin/splunk http-event-collector create firehose-token \
+        -uri https://localhost:8089 \
+        -auth admin:changeme \
+        -description "Firehose ingestion token" \
+        -disabled 0 \
+        -index main \
+        -indexes main \
+        -use-ack 1 | grep "token=" | cut -d= -f2)
+    
+    if [ -z "$HEC_TOKEN" ]; then
+        log_message "ERROR" "Failed to create HEC token"
+        return 1
+    fi
+    
+    log_message "INFO" "HEC token created: ${HEC_TOKEN:0:8}...${HEC_TOKEN: -8}"
+    
+    # Store HEC token in Parameter Store
+    aws ssm put-parameter \
+        --region us-east-1 \
+        --name /ephemeral-splunk/hec-token \
+        --value "$HEC_TOKEN" \
+        --type SecureString \
+        --overwrite
+    
+    log_message "INFO" "HEC token stored in Parameter Store"
     
     log_message "INFO" "Splunk installation completed successfully"
     return 0
@@ -121,28 +130,37 @@ main() {
     
     # Download installer
     log_message "INFO" "Downloading Splunk installer from: $download_url"
-    if ! wget -O splunk-installer.tgz "$download_url"; then
-        log_message "ERROR" "Failed to download Splunk installer"
-        exit 1
+    
+    # Use AWS CLI for S3 URLs, wget for HTTPS URLs
+    if [[ "$download_url" =~ ^s3:// ]]; then
+        if ! aws s3 cp "$download_url" splunk-installer.rpm --region us-east-1; then
+            log_message "ERROR" "Failed to download Splunk installer from S3"
+            exit 1
+        fi
+    else
+        if ! wget -O splunk-installer.rpm "$download_url"; then
+            log_message "ERROR" "Failed to download Splunk installer"
+            exit 1
+        fi
     fi
     
     # Verify download
-    if [ ! -f splunk-installer.tgz ] || [ ! -s splunk-installer.tgz ]; then
+    if [ ! -f splunk-installer.rpm ] || [ ! -s splunk-installer.rpm ]; then
         log_message "ERROR" "Downloaded file is missing or empty"
         exit 1
     fi
     
-    # Check if it's actually a tar.gz file
-    if ! file splunk-installer.tgz | grep -q "gzip compressed"; then
-        log_message "ERROR" "Downloaded file is not a valid gzip archive"
-        head -c 500 splunk-installer.tgz | log_message "ERROR" "File content preview: $(cat)"
+    # Check if it's actually an RPM file
+    if ! file splunk-installer.rpm | grep -q "RPM"; then
+        log_message "ERROR" "Downloaded file is not a valid RPM package"
+        head -c 500 splunk-installer.rpm | log_message "ERROR" "File content preview: $(cat)"
         exit 1
     fi
     
-    log_message "INFO" "Download successful, file size: $(wc -c < splunk-installer.tgz) bytes"
+    log_message "INFO" "Download successful, file size: $(wc -c < splunk-installer.rpm) bytes"
     
     # Install Splunk
-    if ! install_splunk splunk-installer.tgz; then
+    if ! install_splunk splunk-installer.rpm; then
         log_message "ERROR" "Splunk installation failed"
         exit 1
     fi
@@ -157,7 +175,7 @@ main() {
     fi
     
     # Cleanup
-    rm -f splunk-installer.tgz
+    rm -f splunk-installer.rpm
     
     log_message "INFO" "Splunk installation process completed"
 }

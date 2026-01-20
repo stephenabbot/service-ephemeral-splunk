@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 
   backend "s3" {
@@ -74,6 +78,7 @@ module "splunk_instance" {
   volume_size         = local.environment_config[var.deployment_environment].volume_size
   cost_alarm_email    = var.cost_alarm_email
   cost_thresholds     = var.cost_thresholds
+  splunk_s3_bucket    = var.splunk_s3_bucket
   tags                = module.standard_tags.tags
 }
 
@@ -120,7 +125,20 @@ variable "cost_thresholds" {
   default     = [5, 10, 20]
 }
 
+variable "splunk_s3_bucket" {
+  description = "S3 bucket containing Splunk installer"
+  type        = string
+}
+
 # Outputs
+# Store instance ID in Parameter Store for easy retrieval by scripts
+resource "aws_ssm_parameter" "instance_id" {
+  name  = "/ephemeral-splunk/instance-id"
+  type  = "String"
+  value = module.splunk_instance.instance_id
+  tags  = module.standard_tags.tags
+}
+
 output "instance_info" {
   description = "Splunk instance information"
   value = {

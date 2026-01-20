@@ -23,6 +23,11 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'EOF'
             "file_path": "/var/log/user-data.log",
             "log_group_name": "${log_group_name}",
             "log_stream_name": "{instance_id}/user-data.log"
+          },
+          {
+            "file_path": "/var/log/splunk-installer.log",
+            "log_group_name": "${log_group_name}",
+            "log_stream_name": "{instance_id}/splunk-installer.log"
           }
         ]
       }

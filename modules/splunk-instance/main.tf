@@ -16,6 +16,12 @@ data "aws_subnets" "default" {
   }
 }
 
+# Detect architecture from instance type
+locals {
+  is_arm = can(regex("^(a1|t4g|c6g|c7g|m6g|m7g|r6g|r7g|g5g|im4gn|is4gen|x2gd)", var.instance_type))
+  architecture = local.is_arm ? "arm64" : "x86_64"
+}
+
 # Get latest Amazon Linux 2 AMI
 data "aws_ami" "amazon_linux" {
   most_recent = true
@@ -23,7 +29,7 @@ data "aws_ami" "amazon_linux" {
 
   filter {
     name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+    values = ["amzn2-ami-hvm-*-${local.architecture}-gp2"]
   }
 
   filter {
@@ -149,6 +155,13 @@ resource "aws_iam_role_policy" "splunk_instance_policy" {
           "ec2messages:SendReply"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "arn:aws:s3:::${var.splunk_s3_bucket}/*"
       }
     ]
   })
@@ -167,11 +180,25 @@ resource "aws_iam_instance_profile" "splunk_instance_profile" {
   tags = var.tags
 }
 
+# Get CloudFront prefix list for ingress rules
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
 # Security Group
 resource "aws_security_group" "splunk_instance_sg" {
   name_prefix = "ephemeral-splunk-"
   vpc_id      = data.aws_vpc.default.id
   description = "Security group for ephemeral Splunk instance"
+
+  # Inbound rule for CloudFront to HEC
+  ingress {
+    from_port       = 8088
+    to_port         = 8088
+    protocol        = "tcp"
+    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
+    description     = "Allow CloudFront to Splunk HEC"
+  }
 
   # Outbound rules for SSM, package downloads, and Splunk downloads
   egress {
@@ -223,10 +250,21 @@ resource "aws_instance" "splunk_instance" {
   iam_instance_profile    = aws_iam_instance_profile.splunk_instance_profile.name
   user_data               = local.user_data
 
+  # Spot instance configuration with capacity-optimized strategy
+  instance_market_options {
+    market_type = "spot"
+    
+    spot_options {
+      spot_instance_type             = "persistent"
+      instance_interruption_behavior = "stop"
+      # No max_price - defaults to on-demand price with capacity-optimized
+    }
+  }
+
   root_block_device {
     volume_type           = "gp3"
     volume_size           = var.volume_size
-    delete_on_termination = true
+    delete_on_termination = false
     encrypted             = true
   }
 
@@ -237,6 +275,20 @@ resource "aws_instance" "splunk_instance" {
   lifecycle {
     create_before_destroy = false
   }
+}
+
+# Elastic IP for CloudFront origin
+resource "aws_eip" "splunk_instance" {
+  domain = "vpc"
+  tags = merge(var.tags, {
+    Name = "ephemeral-splunk-eip-${var.environment}"
+  })
+}
+
+# Associate EIP with instance
+resource "aws_eip_association" "splunk_instance" {
+  instance_id   = aws_instance.splunk_instance.id
+  allocation_id = aws_eip.splunk_instance.id
 }
 
 # Get current AWS region

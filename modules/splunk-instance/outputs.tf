@@ -5,7 +5,12 @@ output "instance_id" {
 
 output "instance_ip" {
   description = "EC2 instance public IP"
-  value       = aws_instance.splunk_instance.public_ip
+  value       = aws_eip.splunk_instance.public_ip
+}
+
+output "instance_public_dns" {
+  description = "EC2 instance public DNS"
+  value       = aws_eip.splunk_instance.public_dns
 }
 
 output "log_group_name" {

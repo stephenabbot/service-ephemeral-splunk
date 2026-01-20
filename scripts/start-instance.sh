@@ -26,17 +26,13 @@ export AWS_PAGER=""
 echo "▶️  STARTING EPHEMERAL SPLUNK INSTANCE ▶️"
 echo ""
 
-# Check if infrastructure outputs exist
-if [ ! -f "infrastructure-outputs.json" ]; then
-    print_error "Infrastructure outputs not found. Run ./scripts/deploy.sh first"
-    exit 1
-fi
+# Get instance ID from Parameter Store
+print_status "Retrieving instance ID from Parameter Store..."
+INSTANCE_ID=$(aws ssm get-parameter --name /ephemeral-splunk/instance-id --query Parameter.Value --output text 2>/dev/null || echo "")
 
-# Get instance information
-INSTANCE_ID=$(jq -r '.instance_info.value.instance_id' infrastructure-outputs.json)
-
-if [ "$INSTANCE_ID" = "null" ] || [ -z "$INSTANCE_ID" ]; then
-    print_error "Could not get instance ID from outputs"
+if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "null" ]; then
+    print_error "Could not get instance ID from Parameter Store"
+    print_error "Infrastructure may not be deployed. Run ./scripts/deploy.sh first"
     exit 1
 fi
 
@@ -44,14 +40,15 @@ print_status "Instance ID: $INSTANCE_ID"
 
 # Check current instance state
 print_status "Checking current instance state..."
-INSTANCE_STATE=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo "not-found")
+INSTANCE_INFO=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0]' 2>/dev/null || echo "{}")
+INSTANCE_STATE=$(echo "$INSTANCE_INFO" | jq -r '.State.Name // "not-found"')
 
 case "$INSTANCE_STATE" in
     "running")
         print_success "Instance is already running"
         ;;
     "stopped")
-        print_status "Starting stopped instance..."
+        print_status "Starting stopped spot instance..."
         aws ec2 start-instances --instance-ids "$INSTANCE_ID" > /dev/null
         
         print_status "Waiting for instance to start..."
@@ -149,15 +146,16 @@ echo "  • Instance ID: $INSTANCE_ID"
 echo "  • State: $INSTANCE_STATE"
 echo "  • Public IP: $INSTANCE_IP"
 echo ""
-echo "🔗 Connection Commands:"
-echo "  • SSM Shell: aws ssm start-session --target $INSTANCE_ID"
-echo "  • Port Forward: aws ssm start-session --target $INSTANCE_ID --document-name AWS-StartPortForwardingSession --parameters 'portNumber=8000,localPortNumber=8000'"
-echo "  • Splunk URL: http://localhost:8000 (after port forwarding)"
-echo "  • Default Login: admin / changeme"
+echo "🌐 To access Splunk web interface:"
+echo "  1. Run this command in your terminal:"
+echo "     aws ssm start-session --target $INSTANCE_ID --document-name AWS-StartPortForwardingSession --parameters 'portNumber=8000,localPortNumber=8000'"
 echo ""
-echo "🔍 Next Steps:"
-echo "  1. Verify installation: ./scripts/verify-installation.sh"
-echo "  2. Connect via SSM and check Splunk status if needed"
-echo "  3. Set up port forwarding to access Splunk web interface"
+echo "  2. Open your browser to: http://localhost:8000"
+echo ""
+echo "  3. Login with username: admin  password: changeme"
+echo ""
+echo "🔍 Additional Commands:"
+echo "  • Verify installation: ./scripts/verify-installation.sh"
+echo "  • SSM Shell: aws ssm start-session --target $INSTANCE_ID"
 echo ""
 echo "▶️  Instance is ready for use! ▶️"

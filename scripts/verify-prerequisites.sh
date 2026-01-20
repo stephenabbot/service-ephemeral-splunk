@@ -130,10 +130,10 @@ else
     print_success "Default VPC is available"
 fi
 
-# Check .env file
+# Check config.env file
 print_status "Checking configuration file..."
-if [ ! -f ".env" ]; then
-    print_error ".env file not found"
+if [ ! -f "config.env" ]; then
+    print_error "config.env file not found"
     exit 1
 fi
 print_success "Configuration file found"

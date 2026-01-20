@@ -9,9 +9,9 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # Load environment variables
-if [ -f ".env" ]; then
+if [ -f "config.env" ]; then
     set -a
-    source .env
+    source config.env
     set +a
 fi
 
@@ -27,9 +27,58 @@ echo ""
 echo "Step 1: Verifying prerequisites..."
 ./scripts/verify-prerequisites.sh || exit 1
 
-# Step 2: Check for project deployment role and assume if available
+# Step 2: Validate S3 installer availability
 echo ""
-echo "Step 2: Checking for project deployment role..."
+echo "Step 2: Validating S3-hosted Splunk installer..."
+
+if [ -z "${SPLUNK_S3_INSTALLER_PARAM:-}" ]; then
+  echo "❌ SPLUNK_S3_INSTALLER_PARAM not set in config.env"
+  exit 1
+fi
+
+echo "  Fetching installer URL from Parameter Store: $SPLUNK_S3_INSTALLER_PARAM"
+S3_INSTALLER_URL=$(aws ssm get-parameter --region us-east-1 --name "$SPLUNK_S3_INSTALLER_PARAM" --query Parameter.Value --output text 2>/dev/null || echo "")
+
+if [ -z "$S3_INSTALLER_URL" ]; then
+  echo "❌ Parameter $SPLUNK_S3_INSTALLER_PARAM not found in Parameter Store"
+  echo "  Deploy the splunk-s3-installer project first: https://github.com/stephenabbot/splunk-s3-installer"
+  exit 1
+fi
+
+echo "✓ Installer URL: $S3_INSTALLER_URL"
+
+# Parse S3 bucket and key from URL
+if [[ "$S3_INSTALLER_URL" =~ s3://([^/]+)/(.+) ]]; then
+  S3_BUCKET="${BASH_REMATCH[1]}"
+  S3_KEY="${BASH_REMATCH[2]}"
+elif [[ "$S3_INSTALLER_URL" =~ https://([^.]+)\.s3[^/]*\.amazonaws\.com/(.+) ]]; then
+  S3_BUCKET="${BASH_REMATCH[1]}"
+  S3_KEY="${BASH_REMATCH[2]}"
+else
+  echo "❌ Invalid S3 URL format: $S3_INSTALLER_URL"
+  echo "  Expected: s3://bucket/key or https://bucket.s3.region.amazonaws.com/key"
+  exit 1
+fi
+
+echo "  Bucket: $S3_BUCKET"
+echo "  Key: $S3_KEY"
+
+# Verify S3 object exists and is accessible
+echo "  Verifying S3 object accessibility..."
+if ! aws s3api head-object --bucket "$S3_BUCKET" --key "$S3_KEY" --region us-east-1 >/dev/null 2>&1; then
+  echo "❌ Cannot access S3 object: s3://$S3_BUCKET/$S3_KEY"
+  echo "  Verify the installer exists and you have permissions"
+  exit 1
+fi
+
+echo "✓ S3 installer validated and accessible"
+
+# Export for Terraform
+export TF_VAR_splunk_s3_bucket="$S3_BUCKET"
+
+# Step 3: Check for project deployment role and assume if available
+echo ""
+echo "Step 3: Checking for project deployment role..."
 
 # Extract project name from git remote URL
 PROJECT_NAME=$(git remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/][^/]+/([^/.]+)(\.git)?$|\1|' || echo "")
@@ -63,9 +112,9 @@ else
   fi
 fi
 
-# Step 3: Configure OpenTofu backend
+# Step 4: Configure OpenTofu backend
 echo ""
-echo "Step 3: Configuring OpenTofu backend..."
+echo "Step 4: Configuring OpenTofu backend..."
 
 # Get backend configuration from foundation
 STATE_BUCKET=$(aws ssm get-parameter --region us-east-1 --name "/terraform/foundation/s3-state-bucket" --query Parameter.Value --output text 2>/dev/null || echo "")
@@ -86,17 +135,9 @@ echo "  Bucket: $STATE_BUCKET"
 echo "  DynamoDB: $DYNAMODB_TABLE"
 echo "  Key: $BACKEND_KEY"
 
-# Step 4: Initialize OpenTofu
+# Step 5: Initialize OpenTofu
 echo ""
-echo "Step 4: Initializing OpenTofu..."
-
-# Clear any stale DynamoDB locks before initialization
-aws dynamodb scan --table-name "$DYNAMODB_TABLE" --filter-expression "contains(LockID, :key)" --expression-attribute-values "{\":key\":{\"S\":\"$BACKEND_KEY\"}}" --query 'Items[].LockID.S' --output text 2>/dev/null | tr '\t' '\n' | while read -r lock_id; do
-  if [ -n "$lock_id" ]; then
-    echo "Clearing stale lock: $lock_id"
-    aws dynamodb delete-item --table-name "$DYNAMODB_TABLE" --key "{\"LockID\":{\"S\":\"$lock_id\"}}" 2>/dev/null || true
-  fi
-done
+echo "Step 5: Initializing OpenTofu..."
 
 tofu init -reconfigure \
     -backend-config="bucket=$STATE_BUCKET" \
@@ -104,25 +145,26 @@ tofu init -reconfigure \
     -backend-config="key=$BACKEND_KEY" \
     -backend-config="region=us-east-1"
 
-# Step 5: Plan deployment
+# Step 6: Plan deployment
 echo ""
-echo "Step 5: Planning deployment..."
+echo "Step 6: Planning deployment..."
 tofu plan -out=tfplan \
     -var="aws_region=${AWS_REGION:-us-east-1}" \
     -var="deployment_environment=${DEPLOYMENT_ENVIRONMENT:-prd}" \
     -var="tag_owner=${TAG_OWNER:-Platform Team}" \
     -var="ec2_instance_type=${EC2_INSTANCE_TYPE:-t3.large}" \
     -var="ebs_volume_size=${EBS_VOLUME_SIZE:-100}" \
-    -var="cost_alarm_email=${COST_ALARM_EMAIL:-abbotnh@yahoo.com}"
+    -var="cost_alarm_email=${COST_ALARM_EMAIL:-abbotnh@yahoo.com}" \
+    -var="splunk_s3_bucket=$S3_BUCKET"
 
-# Step 6: Apply deployment
+# Step 7: Apply deployment
 echo ""
-echo "Step 6: Applying deployment..."
+echo "Step 7: Applying deployment..."
 tofu apply tfplan
 
-# Step 7: Generate outputs and store in SSM
+# Step 8: Generate outputs and store in SSM
 echo ""
-echo "Step 7: Generating outputs and storing in SSM..."
+echo "Step 8: Generating outputs and storing in SSM..."
 
 # Generate outputs JSON (this will be gitignored)
 tofu output -json > infrastructure-outputs.json
@@ -152,10 +194,14 @@ echo ""
 echo "🔍 Next steps:"
 echo "  1. Wait 5-10 minutes for Splunk installation to complete"
 echo "  2. Check installation status: ./scripts/verify-installation.sh"
-echo "  3. Connect via SSM: $(jq -r '.connection_info.value.ssm_command' infrastructure-outputs.json)"
-echo "  4. Access Splunk UI: $(jq -r '.connection_info.value.port_forward_command' infrastructure-outputs.json)"
-echo "  5. Open browser to: $(jq -r '.connection_info.value.splunk_url' infrastructure-outputs.json)"
-echo "  6. Default login: admin / changeme"
+echo ""
+echo "🌐 To access Splunk web interface:"
+echo "  1. Run this command in your terminal:"
+echo "     $(jq -r '.connection_info.value.port_forward_command' infrastructure-outputs.json)"
+echo ""
+echo "  2. Open your browser to: http://localhost:8000"
+echo ""
+echo "  3. Login with username: admin  password: changeme"
 echo ""
 echo "💰 Cost monitoring:"
 echo "  • Cost alarms configured for \$5, \$10, \$20"

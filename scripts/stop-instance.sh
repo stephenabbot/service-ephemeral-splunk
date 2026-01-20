@@ -26,17 +26,13 @@ export AWS_PAGER=""
 echo "⏹️  STOPPING EPHEMERAL SPLUNK INSTANCE ⏹️"
 echo ""
 
-# Check if infrastructure outputs exist
-if [ ! -f "infrastructure-outputs.json" ]; then
-    print_error "Infrastructure outputs not found. Run ./scripts/deploy.sh first"
-    exit 1
-fi
+# Get instance ID from Parameter Store
+print_status "Retrieving instance ID from Parameter Store..."
+INSTANCE_ID=$(aws ssm get-parameter --name /ephemeral-splunk/instance-id --query Parameter.Value --output text 2>/dev/null || echo "")
 
-# Get instance information
-INSTANCE_ID=$(jq -r '.instance_info.value.instance_id' infrastructure-outputs.json)
-
-if [ "$INSTANCE_ID" = "null" ] || [ -z "$INSTANCE_ID" ]; then
-    print_error "Could not get instance ID from outputs"
+if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "null" ]; then
+    print_error "Could not get instance ID from Parameter Store"
+    print_error "Infrastructure may not be deployed. Run ./scripts/deploy.sh first"
     exit 1
 fi
 
@@ -112,7 +108,7 @@ echo "  • State: $FINAL_STATE"
 echo ""
 echo "💰 Cost Information:"
 echo "  • No compute charges while stopped"
-echo "  • EBS volume charges still apply (~$8/month for 100GB)"
+echo "  • EBS volume charges still apply (varies by volume size)"
 echo "  • Use ./scripts/destroy.sh for zero costs"
 echo ""
 echo "🔄 Management Commands:"
