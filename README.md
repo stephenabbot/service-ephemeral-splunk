@@ -58,7 +58,7 @@ AWS Kinesis Firehose → CloudFront (HTTPS) → EC2 Instance (HTTP:8088) → Spl
 **Splunk HEC Configuration:**
 - Protocol: HTTP (port 8088)
 - SSL: Disabled (CloudFront terminates SSL)
-- Indexer Acknowledgement: Disabled (Firehose doesn't support channel IDs)
+- Indexer Acknowledgement: Enabled (returns ackId for verification)
 - Default Index: main
 - Token: Stored in Parameter Store as SecureString
 
@@ -205,10 +205,19 @@ aws ssm get-parameter --name /ephemeral-splunk/cloudfront-endpoint --query Param
 
 **`scripts/test-splunk-hec.sh`**
 - Retrieves HEC token and CloudFront endpoint from Parameter Store
-- Sends 3 test events to Splunk via CloudFront
-- Validates successful ingestion
-- Reports success/failure statistics
-- **Use Case**: Verify end-to-end connectivity after deployment
+- Generates unique channel GUID for acknowledgment workflow
+- Sends 3 test events to Splunk via CloudFront with channel ID
+- Captures ackId from each response
+- Queries `/services/collector/ack` endpoint to verify indexing
+- Reports indexing status for all events
+- **Use Case**: Verify end-to-end connectivity and acknowledgment workflow
+
+**`scripts/enable-hec-acknowledgment.sh`**
+- Enables indexer acknowledgment on running Splunk instance
+- Modifies inputs.conf to set useACK = 1
+- Restarts Splunk to apply changes
+- Verifies Splunk is running after restart
+- **Use Case**: Enable acknowledgment without redeploying infrastructure
 
 ### Utility Scripts
 
@@ -326,7 +335,33 @@ The user data script includes comprehensive logging to CloudWatch Logs. On insta
 
 For planned changes and improvements, see `TODO.md`.
 
-For detailed architecture decisions and implementation rationale, see `project_sow.md`.
+## Documentation
+
+### Scripts Reference
+
+All scripts are located in the `scripts/` directory:
+
+- **[deploy.sh](scripts/deploy.sh)** - Deploy complete Splunk infrastructure
+- **[destroy.sh](scripts/destroy.sh)** - Destroy all Splunk infrastructure
+- **[setup-cloudfront.sh](scripts/setup-cloudfront.sh)** - Create CloudFront distribution
+- **[destroy-cloudfront.sh](scripts/destroy-cloudfront.sh)** - Destroy CloudFront distribution
+- **[start-instance.sh](scripts/start-instance.sh)** - Start stopped EC2 instance
+- **[stop-instance.sh](scripts/stop-instance.sh)** - Stop running EC2 instance
+- **[verify-installation.sh](scripts/verify-installation.sh)** - Check deployment status
+- **[test-splunk-hec.sh](scripts/test-splunk-hec.sh)** - Test HEC with acknowledgment workflow
+- **[enable-hec-acknowledgment.sh](scripts/enable-hec-acknowledgment.sh)** - Enable acknowledgment on running instance
+- **[list-deployed-resources.sh](scripts/list-deployed-resources.sh)** - List all deployed resources
+- **[verify-prerequisites.sh](scripts/verify-prerequisites.sh)** - Verify required tools and AWS resources
+- **[get-splunk-installer.sh](scripts/get-splunk-installer.sh)** - Download and install Splunk (runs via user data)
+
+### Additional Documentation
+
+Documentation files are located in the `docs/` directory:
+
+- **[splunk_ack_details.md](docs/splunk_ack_details.md)** - Complete guide to Splunk HEC indexer acknowledgment including sending events with channel IDs, querying ack status, and best practices
+- **[hec_acknowledgment_implementation.md](docs/hec_acknowledgment_implementation.md)** - Implementation summary of acknowledgment changes made to this project, including test results and configuration details
+- **[get_blocked_url.md](docs/get_blocked_url.md)** - Guide for retrieving content from browser-protected URLs using curl with User-Agent spoofing
+- **[cw_log_data_to_splunk.md](docs/cw_log_data_to_splunk.md)** - Guide for sending CloudWatch Logs data to Splunk via Kinesis Firehose
 
 ## License
 
