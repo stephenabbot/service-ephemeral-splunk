@@ -34,9 +34,11 @@ print_status "Checking if CloudFront distribution already exists..."
 EXISTING_DISTRO=$(aws ssm get-parameter --name /ephemeral-splunk/cloudfront-distribution-id --query Parameter.Value --output text 2>/dev/null || echo "")
 
 if [ -n "$EXISTING_DISTRO" ] && [ "$EXISTING_DISTRO" != "null" ]; then
-    print_error "CloudFront distribution already exists: $EXISTING_DISTRO"
-    print_error "Script has already been run. Exiting."
-    exit 1
+    print_warning "CloudFront distribution already exists: $EXISTING_DISTRO"
+    print_warning "Will update HEC token and skip CloudFront deployment"
+    SKIP_CLOUDFRONT=true
+else
+    SKIP_CLOUDFRONT=false
 fi
 
 # Get instance ID
@@ -69,14 +71,15 @@ else
     exit 1
 fi
 
-# Enable HEC and create token via SSM
+# Enable HEC and get/create token via SSM
 print_status "Enabling Splunk HEC..."
 COMMAND_ID=$(aws ssm send-command \
     --instance-ids "$INSTANCE_ID" \
     --document-name "AWS-RunShellScript" \
     --parameters 'commands=[
-"sudo -u splunk /opt/splunk/bin/splunk http-event-collector enable -uri https://localhost:8089 -auth admin:changeme",
-"sudo -u splunk /opt/splunk/bin/splunk http-event-collector create firehose-token -uri https://localhost:8089 -auth admin:changeme -description \"Firehose ingestion token\" -disabled 0 -index main -indexes main -use-ack 1 | grep token= | cut -d= -f2"
+"sudo -u splunk /opt/splunk/bin/splunk http-event-collector enable -uri https://localhost:8089 -auth admin:changeme 2>&1",
+"sudo -u splunk /opt/splunk/bin/splunk http-event-collector delete firehose-token -uri https://localhost:8089 -auth admin:changeme 2>&1 || true",
+"sudo -u splunk /opt/splunk/bin/splunk http-event-collector create firehose-token -uri https://localhost:8089 -auth admin:changeme -description \"Firehose ingestion token\" -disabled 0 -index main -indexes main -use-ack 1 2>&1 | grep \"token=\" | cut -d= -f2"
 ]' \
     --query 'Command.CommandId' \
     --output text)
@@ -87,7 +90,7 @@ HEC_TOKEN=$(aws ssm get-command-invocation \
     --command-id "$COMMAND_ID" \
     --instance-id "$INSTANCE_ID" \
     --query 'StandardOutputContent' \
-    --output text | grep -v "^$" | tail -1)
+    --output text | grep -E '^[a-f0-9-]{36}$' | head -1)
 
 if [ -z "$HEC_TOKEN" ]; then
     print_error "Failed to create HEC token"
@@ -134,10 +137,22 @@ else
     exit 1
 fi
 
-# Generate origin secret
-ORIGIN_SECRET=$(openssl rand -hex 32)
-aws ssm put-parameter --name /ephemeral-splunk/origin-secret --value "$ORIGIN_SECRET" --type SecureString --overwrite
-print_success "Origin secret generated and stored"
+# Generate origin secret (only if deploying CloudFront)
+if [ "$SKIP_CLOUDFRONT" = false ]; then
+    ORIGIN_SECRET=$(openssl rand -hex 32)
+    aws ssm put-parameter --name /ephemeral-splunk/origin-secret --value "$ORIGIN_SECRET" --type SecureString --overwrite
+    print_success "Origin secret generated and stored"
+fi
+
+# Exit early if CloudFront already exists
+if [ "$SKIP_CLOUDFRONT" = true ]; then
+    print_success "HEC token updated successfully"
+    echo ""
+    echo "📋 CloudFront already deployed. HEC token has been refreshed."
+    echo "  • HEC Token: (stored in /ephemeral-splunk/hec-token)"
+    echo ""
+    exit 0
+fi
 
 # Get git info for tags
 PROJECT_NAME=$(git remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/][^/]+/([^/.]+)(\.git)?$|\1|' || echo "ephemeral-splunk")
