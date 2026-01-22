@@ -29,6 +29,13 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 echo "🌐 SETTING UP CLOUDFRONT FOR SPLUNK HEC 🌐"
 echo ""
 
+# Validate prerequisites
+print_status "Validating prerequisites..."
+if ! aws ssm get-parameter --name /ephemeral-splunk/instance-id --query Parameter.Value --output text &>/dev/null; then
+    print_error "Splunk instance not deployed. Run ./scripts/deploy.sh first."
+    exit 1
+fi
+
 # Check if already deployed
 print_status "Checking if CloudFront distribution already exists..."
 EXISTING_DISTRO=$(aws ssm get-parameter --name /ephemeral-splunk/cloudfront-distribution-id --query Parameter.Value --output text 2>/dev/null || echo "")
@@ -105,20 +112,21 @@ if [ -n "$EXISTING_TOKEN" ]; then
     fi
 fi
 
-# Create token if needed
+# Create or retrieve token
 if [ -z "$EXISTING_TOKEN" ]; then
-    print_status "Creating new HEC token..."
+    print_status "Retrieving or creating HEC token..."
+    
+    # First try to retrieve existing token
     COMMAND_ID=$(aws ssm send-command \
         --instance-ids "$INSTANCE_ID" \
         --document-name "AWS-RunShellScript" \
         --parameters 'commands=[
-"sudo -u splunk /opt/splunk/bin/splunk http-event-collector enable -uri https://localhost:8089 -auth admin:changeme 2>&1",
-"sudo -u splunk /opt/splunk/bin/splunk http-event-collector create firehose-token -uri https://localhost:8089 -auth admin:changeme -description \"Firehose ingestion token\" -disabled 0 -index main -indexes main -use-ack 1 2>&1 | grep \"token=\" | cut -d= -f2"
+"sudo -u splunk /opt/splunk/bin/splunk http-event-collector list -uri https://localhost:8089 -auth admin:changeme 2>&1 | grep -A 1 \"firehose-token\" | grep \"token=\" | cut -d= -f2"
 ]' \
         --query 'Command.CommandId' \
         --output text)
     
-    sleep 10
+    sleep 5
     
     HEC_TOKEN=$(aws ssm get-command-invocation \
         --command-id "$COMMAND_ID" \
@@ -126,12 +134,45 @@ if [ -z "$EXISTING_TOKEN" ]; then
         --query 'StandardOutputContent' \
         --output text | grep -E '^[a-f0-9-]{36}$' | head -1)
     
+    # If token doesn't exist, create it
     if [ -z "$HEC_TOKEN" ]; then
-        print_error "Failed to create HEC token"
+        print_status "Token not found, creating new HEC token..."
+        
+        # Delete any partially created token first
+        aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["sudo -u splunk /opt/splunk/bin/splunk http-event-collector delete firehose-token -uri https://localhost:8089 -auth admin:changeme 2>&1 || true"]' \
+            --query 'Command.CommandId' \
+            --output text &>/dev/null
+        
+        sleep 3
+        
+        COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+"sudo -u splunk /opt/splunk/bin/splunk http-event-collector enable -uri https://localhost:8089 -auth admin:changeme 2>&1",
+"sudo -u splunk /opt/splunk/bin/splunk http-event-collector create firehose-token -uri https://localhost:8089 -auth admin:changeme -description \"Firehose ingestion token\" -disabled 0 -index main -indexes main -use-ack 1 2>&1 | grep \"token=\" | cut -d= -f2"
+]' \
+            --query 'Command.CommandId' \
+            --output text)
+        
+        sleep 10
+        
+        HEC_TOKEN=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text | grep -E '^[a-f0-9-]{36}$' | head -1)
+    fi
+    
+    if [ -z "$HEC_TOKEN" ]; then
+        print_error "Failed to retrieve or create HEC token"
         exit 1
     fi
     
-    print_success "HEC token created with indexer acknowledgment enabled"
+    print_success "HEC token retrieved/created with indexer acknowledgment enabled"
     
     # Store HEC token
     aws ssm put-parameter --name /ephemeral-splunk/hec-token --value "$HEC_TOKEN" --type SecureString --overwrite
@@ -175,8 +216,11 @@ fi
 # Exit early if CloudFront already exists
 if [ "$SKIP_CLOUDFRONT" = true ]; then
     print_success "HEC token updated successfully"
+    print_warning "CloudFront already deployed. To redeploy, run ./scripts/destroy-cloudfront.sh first."
     echo ""
-    echo "📋 CloudFront already deployed. HEC token has been refreshed."
+    echo "📋 Existing Configuration:"
+    echo "  • CloudFront Distribution: $EXISTING_DISTRO"
+    echo "  • Endpoint: $(aws ssm get-parameter --name /ephemeral-splunk/cloudfront-endpoint --query Parameter.Value --output text 2>/dev/null || echo 'Not found')"
     echo "  • HEC Token: (stored in /ephemeral-splunk/hec-token)"
     echo ""
     exit 0
@@ -244,11 +288,12 @@ resource "aws_route53_record" "cert_validation" {
     }
   }
 
-  zone_id = data.aws_route53_zone.bittikens.zone_id
-  name    = each.value.name
-  type    = each.value.type
-  records = [each.value.record]
-  ttl     = 60
+  allow_overwrite = true
+  zone_id         = data.aws_route53_zone.bittikens.zone_id
+  name            = each.value.name
+  type            = each.value.type
+  records         = [each.value.record]
+  ttl             = 60
 }
 
 resource "aws_acm_certificate_validation" "splunk" {
@@ -326,9 +371,10 @@ resource "aws_route53_record" "splunk" {
 }
 
 resource "aws_ssm_parameter" "cloudfront_distribution_id" {
-  name  = "/ephemeral-splunk/cloudfront-distribution-id"
-  type  = "String"
-  value = aws_cloudfront_distribution.splunk.id
+  name      = "/ephemeral-splunk/cloudfront-distribution-id"
+  type      = "String"
+  value     = aws_cloudfront_distribution.splunk.id
+  overwrite = true
 
   tags = {
     Project    = var.project_name
@@ -339,9 +385,10 @@ resource "aws_ssm_parameter" "cloudfront_distribution_id" {
 }
 
 resource "aws_ssm_parameter" "cloudfront_endpoint" {
-  name  = "/ephemeral-splunk/cloudfront-endpoint"
-  type  = "String"
-  value = "https://splunk.bittikens.com"
+  name      = "/ephemeral-splunk/cloudfront-endpoint"
+  type      = "String"
+  value     = "https://splunk.bittikens.com"
+  overwrite = true
 
   tags = {
     Project    = var.project_name
