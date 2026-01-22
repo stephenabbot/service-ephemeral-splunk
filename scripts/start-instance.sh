@@ -105,46 +105,114 @@ else
     print_warning "SSM agent not ready yet - may need a few more minutes"
 fi
 
-# Check if Splunk is running
-print_status "Checking Splunk service status..."
+# Verify Splunk is running and listening
+print_status "Verifying Splunk service is running and ready..."
 
 if [ "$SSM_READY" = true ]; then
+    # Check Splunk process and listening ports
     COMMAND_ID=$(aws ssm send-command \
         --instance-ids "$INSTANCE_ID" \
         --document-name "AWS-RunShellScript" \
-        --parameters 'commands=["sudo systemctl is-active splunk 2>/dev/null || (pgrep -f splunkd > /dev/null && echo active || echo inactive)"]' \
+        --parameters 'commands=[
+            "echo \"=== SPLUNK_PROCESS ===\"",
+            "pgrep -f splunkd > /dev/null && echo RUNNING || echo NOT_RUNNING",
+            "echo \"=== PORT_8088 ===\"",
+            "sudo netstat -tlnp 2>/dev/null | grep :8088 | grep LISTEN > /dev/null && echo LISTENING || echo NOT_LISTENING",
+            "echo \"=== PORT_8000 ===\"",
+            "sudo netstat -tlnp 2>/dev/null | grep :8000 | grep LISTEN > /dev/null && echo LISTENING || echo NOT_LISTENING"
+        ]' \
         --query 'Command.CommandId' \
         --output text 2>/dev/null || echo "")
     
     if [ -n "$COMMAND_ID" ]; then
         sleep 5
         
-        SPLUNK_STATUS=$(aws ssm get-command-invocation \
+        CHECK_OUTPUT=$(aws ssm get-command-invocation \
             --command-id "$COMMAND_ID" \
             --instance-id "$INSTANCE_ID" \
             --query 'StandardOutputContent' \
-            --output text 2>/dev/null | tr -d '\n' || echo "unknown")
+            --output text 2>/dev/null || echo "")
         
-        if echo "$SPLUNK_STATUS" | grep -q "active"; then
-            print_success "Splunk service is running"
+        SPLUNK_RUNNING=$(echo "$CHECK_OUTPUT" | grep -A1 "SPLUNK_PROCESS" | tail -1 | tr -d '\n')
+        PORT_8088=$(echo "$CHECK_OUTPUT" | grep -A1 "PORT_8088" | tail -1 | tr -d '\n')
+        PORT_8000=$(echo "$CHECK_OUTPUT" | grep -A1 "PORT_8000" | tail -1 | tr -d '\n')
+        
+        if [ "$SPLUNK_RUNNING" = "RUNNING" ]; then
+            print_success "Splunk process is running"
         else
-            print_warning "Splunk service is not running - it may need to be started manually"
-            print_status "You can start Splunk with: sudo systemctl start splunk"
+            print_error "Splunk process is not running"
+            print_status "Starting Splunk service..."
+            
+            START_CMD=$(aws ssm send-command \
+                --instance-ids "$INSTANCE_ID" \
+                --document-name "AWS-RunShellScript" \
+                --parameters 'commands=["sudo systemctl start splunk || sudo -u splunk /opt/splunk/bin/splunk start --accept-license --answer-yes --no-prompt"]' \
+                --query 'Command.CommandId' \
+                --output text 2>/dev/null || echo "")
+            
+            if [ -n "$START_CMD" ]; then
+                sleep 30
+                print_status "Waiting for Splunk to start..."
+            fi
+        fi
+        
+        # Wait for ports to be listening (up to 60 seconds)
+        print_status "Waiting for Splunk ports to be ready..."
+        PORTS_READY=false
+        for i in {1..12}; do
+            VERIFY_CMD=$(aws ssm send-command \
+                --instance-ids "$INSTANCE_ID" \
+                --document-name "AWS-RunShellScript" \
+                --parameters 'commands=[
+                    "sudo netstat -tlnp 2>/dev/null | grep :8088 | grep LISTEN > /dev/null && echo HEC_OK || echo HEC_NOT_READY",
+                    "sudo netstat -tlnp 2>/dev/null | grep :8000 | grep LISTEN > /dev/null && echo WEB_OK || echo WEB_NOT_READY"
+                ]' \
+                --query 'Command.CommandId' \
+                --output text 2>/dev/null || echo "")
+            
+            if [ -n "$VERIFY_CMD" ]; then
+                sleep 5
+                VERIFY_OUTPUT=$(aws ssm get-command-invocation \
+                    --command-id "$VERIFY_CMD" \
+                    --instance-id "$INSTANCE_ID" \
+                    --query 'StandardOutputContent' \
+                    --output text 2>/dev/null || echo "")
+                
+                if echo "$VERIFY_OUTPUT" | grep -q "HEC_OK" && echo "$VERIFY_OUTPUT" | grep -q "WEB_OK"; then
+                    PORTS_READY=true
+                    break
+                fi
+            fi
+            echo -n "."
+            sleep 5
+        done
+        echo ""
+        
+        if [ "$PORTS_READY" = true ]; then
+            print_success "Splunk HEC is listening on port 8088"
+            print_success "Splunk web UI is listening on port 8000"
+        else
+            print_error "Splunk ports are not ready after 60 seconds"
+            print_status "Check logs: aws ssm start-session --target $INSTANCE_ID"
+            exit 1
         fi
     else
-        print_warning "Could not check Splunk status via SSM"
+        print_warning "Could not verify Splunk status via SSM"
     fi
 else
-    print_warning "Cannot check Splunk status - SSM not ready"
+    print_warning "Cannot verify Splunk status - SSM not ready"
+    exit 1
 fi
 
 echo ""
-echo "✅ INSTANCE START COMPLETE"
+echo "✅ INSTANCE STARTED AND VERIFIED"
 echo ""
 echo "📋 Instance Information:"
 echo "  • Instance ID: $INSTANCE_ID"
 echo "  • State: $INSTANCE_STATE"
 echo "  • Public IP: $INSTANCE_IP"
+echo "  • Splunk HEC: Listening on port 8088"
+echo "  • Splunk Web UI: Listening on port 8000"
 echo ""
 echo "🌐 To access Splunk web interface:"
 echo "  1. Run this command in your terminal:"
