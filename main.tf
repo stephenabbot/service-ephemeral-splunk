@@ -24,6 +24,7 @@ provider "aws" {
 # Get current caller identity and region
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
+data "aws_iam_account_alias" "current" {}
 
 # Get git remote URL for project identification
 data "external" "git_info" {
@@ -65,8 +66,8 @@ module "standard_tags" {
   project       = local.git_project_name
   repository    = local.git_repository
   environment   = var.deployment_environment
-  owner         = var.tag_owner
   deployed_by   = data.aws_caller_identity.current.arn
+  account_alias = data.aws_iam_account_alias.current.account_alias
 }
 
 # Deploy Splunk instance
@@ -93,12 +94,6 @@ variable "deployment_environment" {
   description = "Deployment environment"
   type        = string
   default     = "prd"
-}
-
-variable "tag_owner" {
-  description = "Owner tag for resources"
-  type        = string
-  default     = "Platform Team"
 }
 
 variable "ec2_instance_type" {

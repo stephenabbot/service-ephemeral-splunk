@@ -9,32 +9,24 @@ variable "repository" {
 }
 
 variable "environment" {
-  description = "Environment name (e.g., Production, Development)"
+  description = "Environment (prd, stg, tst, dev)"
   type        = string
-}
-
-variable "owner" {
-  description = "Resource owner"
-  type        = string
-  default     = "Platform Team"
-}
-
-variable "deployed_by" {
-  description = "IAM principal that deployed the stack"
-  type        = string
-  default     = ""
 }
 
 variable "managed_by" {
-  description = "Management tool"
+  description = "Deployment tool (OpenTofu, CloudFormation, Bash)"
   type        = string
   default     = "OpenTofu"
 }
 
-variable "deployment_id" {
-  description = "Deployment identifier"
+variable "deployed_by" {
+  description = "IAM principal ARN that deployed the resources"
   type        = string
-  default     = "Default"
+}
+
+variable "account_alias" {
+  description = "AWS account alias"
+  type        = string
 }
 
 variable "additional_tags" {
